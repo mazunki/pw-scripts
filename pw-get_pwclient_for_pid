@@ -1,0 +1,16 @@
+#!/bin/sh
+# Returns the corresponding pipewire client id for a process id
+# Uses wl-info to fetch the value
+set -eu
+
+if [ $# -eq 1 ] && [ "$1" -eq "$1" ]; then
+	pid="$1"
+else
+	pid=$(wl-info -M | jq '.pid')
+	echo "got pid: ${pid}"
+fi
+
+pw-dump | \
+		jq -r --argjson pid "${pid:?no pid found}" \
+		'.[] | select(has("info")) | select(.info | has("props")) | select(.info.props."application.process.id" == $pid) | .id'
+

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" = "1" ]; then
+	pwclient="$1"
+else
+	pid=$(wl-info --strict | jq .pid)
+	pwclient=$(pw-get_pwclient_for_pid ${pid:?no pid found})
+fi
+
+for id in $pwclient; do  # firefox has like multiple sources
+	pw-dump | \
+		jq -r --argjson pwclient "${id:?invalid pw client}" \
+		'.[] | select(has("info")) | select(.info | has("props")) | select(.info.props."client.id" == $pwclient) | .info.state' || exit 5
+
+done
+
