@@ -1,0 +1,80 @@
+#!/bin/sh
+# 
+# Tired of reconnecting the same nodes in Helvum over and over again?
+# Don't worry, I got you covered! Save your links to a file, and simply reconnect them.
+#
+#
+# Usage:
+# pw-default-wires save [filename]
+# 	filename = - | string | nothing (defaults to XDG_STATE_HOME/pipewire/wires.conf)
+# 
+# pw-default-wires load [filename]
+# 	filename = - | string | nothing (defaults to XDG_STATE_HOME/pipewire/wires.conf)
+#	
+# pw-default-wires
+# 	displays usage
+# 
+# When using - for the filename, it means you want to pipe it from stdin or stdout.
+# Protip: Use /dev/null or - if you don't want to save anywhere, only display.
+#
+# Dependencies:
+# - awk, to parse stuff
+# - tee, so you can see stuff
+# - pipewire, obviously (pw-cli and pw-link, specifically)
+#
+set -e
+
+PIPEWIRE_WIRE_PATH=${XDG_STATE_HOME:-${HOME:?Could not find home directory}/.local/state}/pipewire/wires.conf 
+[ -n "$2" ] && PIPEWIRE_WIRE_PATH="$2"
+
+dewire_all_links() {
+	pw-dump | jq '.[] | select(.type == "PipeWire:Interface:Link") | .id' | xargs -I{} pw-link -d {}
+}
+
+load_links_from_file() {
+	# takes a filename as $1
+	PIPEWIRE_WIRE_PATH="$1"
+
+	awk 'BEGIN { FS="\t"; OFS=" " } {print "pw-link",$1,$2}' "${PIPEWIRE_WIRE_PATH}" |
+		while read line; do
+			printf "$line" | grep -q "Firefox" && continue  # firefox clients seem to die if reconnected
+			$line || printf "\twarning: $line\n"
+		done
+}
+
+save_links_to_file() {
+	# takes a filename as $1
+	PIPEWIRE_WIRE_PATH="$1"
+	[ "$2" != "-" ] && mkdir -p "$(dirname "${PIPEWIRE_WIRE_PATH}")"
+	[ -f "${PIPEWIRE_WIRE_PATH}" ] && [ "$2" != "-" ] && rm "${PIPEWIRE_WIRE_PATH}"
+
+	format="%s\t%s\t%s\n"
+
+	while IFS= read -r line; do
+		if $(printf "$line" | grep -v -q "^\s*|"); then
+			link_from="$line"
+			link_to=
+		elif $(printf "$line" | grep -q "^\s*|->"); then
+			link_to="$(printf "$line" | sed 's/^[[:space:]]\{2\}|-> //g')"
+			printf "$format" "${link_from:?}" "${link_to:?}" "to" >> "${PIPEWIRE_WIRE_PATH}"
+		elif $(printf "$line" | grep -q "^\s*|<-"); then
+			link_to="$(printf "$line" | sed 's/^[[:space:]]\{2\}|<- //g')"
+			printf "$format" "${link_from:?}" "${link_to:?}" "from" >> "${PIPEWIRE_WIRE_PATH}"
+		fi
+	done < <( pw-link -l )
+
+}
+
+if [ "$1" = "load" ]; then
+	[ "$2" = "-" ] && PIPEWIRE_WIRE_PATH="/dev/stdin"
+	dewire_all_links
+	load_links_from_file "${PIPEWIRE_WIRE_PATH}"
+
+elif [ "$1" = "save" ]; then
+	save_links_to_file "${PIPEWIRE_WIRE_PATH}"
+else
+	printf "Usage: pw-default-wires [command] [filename]\n"
+	printf "\tCommand is either load or save.\n\n"
+	printf "\tFilename is optional, defaults to XDG_STATE_HOME/pipewire/wires.conf\n"
+	printf "\tUse - for pipes. Use /dev/null for dry run.\n"
+fi
